@@ -77,9 +77,12 @@ func NewAtlas(device *sdl.GPUDevice) (*Atlas, error) {
 		draw.Draw(rgba, rgba.Bounds(), img, img.Bounds().Min, draw.Src)
 
 		// Overlay tiles are grayscale masks: their brightness encodes the
-		// grass-lip shape. We store them as white RGB (so the vertex tint
-		// supplies the colour) with alpha = brightness (so dark = transparent).
-		// All other tiles are stored opaquely with their original colour.
+		// grass-lip shape. We store the brightness in BOTH the RGB and alpha
+		// channels. RGB=brightness lets the fragment shader (color × texture)
+		// darken the tint by the grayscale pattern the same way the grass-top
+		// face does, so the side overlay isn't more vivid than the top.
+		// Alpha=brightness makes dark areas transparent so the base shows
+		// through. All other tiles are stored opaquely with their original colour.
 		overlay := world.IsOverlayTile(uint8(i))
 
 		col := uint32(i % atlasTilesPerRow)
@@ -113,9 +116,10 @@ func NewAtlas(device *sdl.GPUDevice) (*Atlas, error) {
 			for x := -atlasPad; x < tilePixelSize+atlasPad; x++ {
 				r, g, b, _ := texel(x, y)
 				if overlay {
-					// Grayscale mask: brightness → alpha, white RGB.
+					// Grayscale mask: brightness → RGB and alpha, so the tint
+					// is darkened by the pattern (RGB) and masked by it (alpha).
 					brightness := r // r==g==b for grayscale source
-					setPx(uint32(int(ox)+x), uint32(int(oy)+y), 255, 255, 255, brightness)
+					setPx(uint32(int(ox)+x), uint32(int(oy)+y), brightness, brightness, brightness, brightness)
 				} else {
 					setPx(uint32(int(ox)+x), uint32(int(oy)+y), r, g, b, 255)
 				}
