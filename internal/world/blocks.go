@@ -79,17 +79,18 @@ var AtlasTileNames = []string{
 
 // Convenience tile indices.
 const (
-	tileDirt            = 0
-	tileGrassTop        = 1
-	tileGrassSide       = 2
-	tileStone           = 3
-	tileCobblestone     = 4
-	tileBedrock         = 5
-	tileOakLogTop       = 6
-	tileOakLog          = 7
-	tileOakPlanks       = 8
-	tileSand            = 9
-	tileGravel          = 10
+	tileDirt             = 0
+	tileGrassTop         = 1
+	tileGrassSide        = 2
+	tileStone            = 3
+	tileCobblestone      = 4
+	tileBedrock          = 5
+	tileOakLogTop        = 6
+	tileOakLog           = 7
+	tileOakPlanks        = 8
+	tileSand             = 9
+	tileGravel           = 10
+	tileGlass            = 15
 	tileGrassSideOverlay = 16
 )
 
@@ -124,7 +125,7 @@ var blockDefs = [NumBlockTypes]blockDef{
 	IronOre:     {name: "iron_ore", tiles: allFaces(tileStone)},
 	DiamondOre:  {name: "diamond_ore", tiles: allFaces(tileStone)},
 	GoldOre:     {name: "gold_ore", tiles: allFaces(tileStone)},
-	Glass:       {name: "glass", tiles: allFaces(uint8(len(AtlasTileNames)) - 1), transparent: true},
+	Glass:       {name: "glass", tiles: allFaces(tileGlass), transparent: true},
 }
 
 // allFaces returns a tile mapping where every face uses the same tile.
