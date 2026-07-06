@@ -250,13 +250,22 @@ func (p *Player) moveAxis(w *world.World, dt float32, axis int) {
 }
 
 // collides reports whether the player's body AABB overlaps any solid block.
+//
+// The AABB is shrunk by a tiny epsilon before flooring so that being exactly
+// flush against a block face (e.g. standing on the ground or pressed against a
+// wall after a snap) does NOT count as a collision. Without this, floor() at an
+// exact integer boundary includes the neighbouring block, which makes the
+// per-axis resolver think there is a collision on the wrong axis — e.g.
+// pressing into a wall would make the Y axis detect a "collision" and snap the
+// player downward into the floor.
 func (p *Player) collides(w *world.World) bool {
-	minX := int32(math.Floor(float64(p.Pos.X() - bodyRadius)))
-	maxX := int32(math.Floor(float64(p.Pos.X() + bodyRadius)))
-	minY := int32(math.Floor(float64(p.Pos.Y())))
-	maxY := int32(math.Floor(float64(p.Pos.Y() + bodyHeight)))
-	minZ := int32(math.Floor(float64(p.Pos.Z() - bodyRadius)))
-	maxZ := int32(math.Floor(float64(p.Pos.Z() + bodyRadius)))
+	const eps = 1e-4
+	minX := int32(math.Floor(float64(p.Pos.X()-bodyRadius + eps)))
+	maxX := int32(math.Floor(float64(p.Pos.X()+bodyRadius - eps)))
+	minY := int32(math.Floor(float64(p.Pos.Y() + eps)))
+	maxY := int32(math.Floor(float64(p.Pos.Y()+bodyHeight - eps)))
+	minZ := int32(math.Floor(float64(p.Pos.Z()-bodyRadius + eps)))
+	maxZ := int32(math.Floor(float64(p.Pos.Z()+bodyRadius - eps)))
 	for y := minY; y <= maxY; y++ {
 		for z := minZ; z <= maxZ; z++ {
 			for x := minX; x <= maxX; x++ {
