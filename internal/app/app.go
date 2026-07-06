@@ -58,6 +58,10 @@ type App struct {
 	// before physics.
 	mouseDX, mouseDY float32
 
+	// physicsAccum is the leftover frame time carried between frames so the
+	// fixed-timestep physics advances correctly regardless of the render rate.
+	physicsAccum float32
+
 	// FPS accounting for the window title.
 	fpsAccum  float32
 	fpsFrames int
@@ -153,23 +157,37 @@ func (a *App) loop() error {
 		}
 		a.mouseDX, a.mouseDY = 0, 0
 
-		// Fixed-timestep physics.
+		// Fixed-timestep physics with a persistent accumulator. The accumulator
+		// carries leftover time across frames so movement advances correctly on
+		// high-refresh displays (where a single frame's dt < tickRate).
 		in := a.readInput()
-		accumulator := dt
-		for accumulator >= tickRate {
-			a.player.Update(tickRate, in, a.world)
-			accumulator -= tickRate
+		a.physicsAccum += dt
+		// Cap the catch-up so a long stall can't trigger a burst of dozens of
+		// ticks (which would itself cause a hitch).
+		if a.physicsAccum > 4*tickRate {
+			a.physicsAccum = 4 * tickRate
 		}
+		for a.physicsAccum >= tickRate {
+			// Snapshot the pre-tick position so the renderer can interpolate
+			// between the previous and current tick states.
+			a.player.PrevPos = a.player.Pos
+			a.player.Update(tickRate, in, a.world)
+			a.physicsAccum -= tickRate
+		}
+		// alpha is how far we are into the next (not yet integrated) tick.
+		alpha := a.physicsAccum / tickRate
+
 		// Keep the world's chunk loading in sync with the player position.
 		a.world.Update(a.player.EyePosition())
 
 		// Push any freshly built chunk meshes to the GPU.
 		a.renderer.ApplyWorldEvents(a.world)
 
-		// Build the view-projection matrix and render.
+		// Build the view-projection matrix from the interpolated eye position
+		// so the camera glides between physics ticks instead of stepping.
 		aspect := a.aspect()
 		proj := mgl32.Perspective(fovY, aspect, nearPlane, farPlane)
-		view := a.player.ViewMatrix()
+		view := a.player.ViewMatrixFrom(a.player.InterpolatedEye(alpha))
 		viewproj := proj.Mul4(view)
 		if err := a.renderer.Render(viewproj); err != nil {
 			return fmt.Errorf("render: %w", err)

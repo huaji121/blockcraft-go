@@ -38,10 +38,14 @@ type Input struct {
 type Player struct {
 	Pos      mgl32.Vec3
 	Vel      mgl32.Vec3
-	Yaw      float32 // radians around world Y
-	Pitch    float32 // radians around local X, clamped to ±maxPitch
-	OnGround bool
-	Flying   bool
+	// PrevPos is the position at the start of the most recent physics tick; the
+	// renderer interpolates between PrevPos and Pos to keep motion smooth at
+	// render rates higher than the physics rate.
+	PrevPos   mgl32.Vec3
+	Yaw       float32 // radians around world Y
+	Pitch     float32 // radians around local X, clamped to ±maxPitch
+	OnGround  bool
+	Flying    bool
 
 	// FlyToggle is a rising-edge signal set by the app when the fly key is
 	// pressed; consumed each update.
@@ -54,6 +58,7 @@ type Player struct {
 func NewPlayer(pos mgl32.Vec3) *Player {
 	return &Player{
 		Pos:       pos,
+		PrevPos:   pos,
 		Yaw:       0,
 		Pitch:     0,
 		MoveSpeed: defaultMoveSpeed,
@@ -94,9 +99,24 @@ func (p *Player) EyePosition() mgl32.Vec3 {
 	return p.Pos.Add(mgl32.Vec3{0, eyeHeight, 0})
 }
 
-// ViewMatrix returns the camera's view matrix.
+// InterpolatedEye returns the camera position linearly blended between the
+// previous and current physics tick positions by alpha in [0,1]. Used by the
+// renderer so motion stays smooth when the render rate exceeds the 60 Hz
+// physics rate.
+func (p *Player) InterpolatedEye(alpha float32) mgl32.Vec3 {
+	pos := p.PrevPos.Add(p.Pos.Sub(p.PrevPos).Mul(alpha))
+	return pos.Add(mgl32.Vec3{0, eyeHeight, 0})
+}
+
+// ViewMatrix returns the camera's view matrix at the current physics position.
 func (p *Player) ViewMatrix() mgl32.Mat4 {
-	eye := p.EyePosition()
+	return p.ViewMatrixFrom(p.EyePosition())
+}
+
+// ViewMatrixFrom returns the camera's view matrix centred on the given eye
+// position, using the current orientation. Pass an interpolated eye for smooth
+// rendering between physics ticks.
+func (p *Player) ViewMatrixFrom(eye mgl32.Vec3) mgl32.Mat4 {
 	center := eye.Add(p.Forward())
 	return mgl32.LookAt(eye.X(), eye.Y(), eye.Z(), center.X(), center.Y(), center.Z(), 0, 1, 0)
 }
