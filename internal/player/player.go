@@ -211,18 +211,42 @@ func (p *Player) Update(dt float32, in Input, w *world.World) {
 }
 
 // moveAxis moves the player along one axis and resolves collisions against the
-// voxel grid by reverting that axis' motion when a solid block is encountered.
-// Resolving per-axis (rather than all at once) is what produces wall-sliding.
+// voxel grid by snapping flush to the contacted block face. Snapping (rather
+// than reverting) is important: reverting leaves the player hovering a
+// fraction above the ground, after which gravity rebuilds each tick and the
+// player drops another small step — producing a visible "land, pause, drop
+// again" settle. Resolving per-axis (rather than all at once) is what produces
+// wall-sliding.
 func (p *Player) moveAxis(w *world.World, dt float32, axis int) {
 	p.Pos[axis] += p.Vel[axis] * dt
-	if p.collides(w) {
-		// Revert and zero the velocity on this axis.
-		p.Pos[axis] -= p.Vel[axis] * dt
-		if axis == 1 && p.Vel[1] < 0 {
-			p.OnGround = true
-		}
-		p.Vel[axis] = 0
+	if !p.collides(w) {
+		return
 	}
+	switch axis {
+	case 0: // X
+		if p.Vel[0] > 0 {
+			// +X face entered a block; rest it on the block's left edge.
+			p.Pos[0] = float32(math.Floor(float64(p.Pos[0]+bodyRadius))) - bodyRadius
+		} else if p.Vel[0] < 0 {
+			p.Pos[0] = float32(math.Floor(float64(p.Pos[0]-bodyRadius)))+1 + bodyRadius
+		}
+	case 1: // Y
+		if p.Vel[1] < 0 {
+			// Feet entered the floor; stand on top of it.
+			p.Pos[1] = float32(math.Floor(float64(p.Pos[1]))) + 1
+			p.OnGround = true
+		} else if p.Vel[1] > 0 {
+			// Head entered a ceiling; hang just below it.
+			p.Pos[1] = float32(math.Floor(float64(p.Pos[1]+bodyHeight))) - bodyHeight
+		}
+	case 2: // Z
+		if p.Vel[2] > 0 {
+			p.Pos[2] = float32(math.Floor(float64(p.Pos[2]+bodyRadius))) - bodyRadius
+		} else if p.Vel[2] < 0 {
+			p.Pos[2] = float32(math.Floor(float64(p.Pos[2]-bodyRadius)))+1 + bodyRadius
+		}
+	}
+	p.Vel[axis] = 0
 }
 
 // collides reports whether the player's body AABB overlaps any solid block.
