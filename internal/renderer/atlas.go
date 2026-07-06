@@ -17,33 +17,53 @@ import (
 	"blockcraft-go/internal/world"
 )
 
-// atlasTilesPerRow is the number of 16px tiles packed into one atlas row. With
-// 16 block textures this gives a 4x4 (64x64px) atlas whose row pitch (256
-// bytes) is already 256-byte aligned, so no extra padding is needed for upload.
+// atlasTilesPerRow is the number of tiles packed into one atlas row. With 16
+// block textures this gives a 4x4 layout.
 const atlasTilesPerRow = 4
 
 const tilePixelSize = 16
 
+// atlasPad is the number of padding pixels added around every tile in the
+// atlas. Each padding row/column duplicates the tile's own edge texel, so any
+// sample that bleeds past the tile's content (due to nearest-filtering
+// precision at face edges) lands on a copy of the edge texel rather than on
+// the neighbouring tile. This is the standard fix for atlas seams.
+const atlasPad = 1
+
+// atlasCellSize is the full per-tile footprint in the atlas including padding.
+const atlasCellSize = tilePixelSize + 2*atlasPad
+
 // Atlas is the packed block-texture atlas living on the GPU, plus the UV table
 // needed by the mesher.
 type Atlas struct {
-	texture    *sdl.GPUTexture
-	sampler    *sdl.GPUSampler
-	size       uint32 // edge length in pixels (square atlas)
-	tileUVs    [][4]float32 // [tile] = {u0, v0, u1, v1} with half-texel inset
+	texture *sdl.GPUTexture
+	sampler *sdl.GPUSampler
+	size    uint32      // edge length in pixels (square atlas)
+	tileUVs [][4]float32 // [tile] = {u0, v0, u1, v1} spanning the content only
 }
 
 // NewAtlas loads every block texture named in world.AtlasTileNames, packs them
-// into a square RGBA atlas and uploads it to the GPU.
+// (with a 1px duplicated border around each) into a square RGBA atlas and
+// uploads it to the GPU.
 func NewAtlas(device *sdl.GPUDevice) (*Atlas, error) {
 	names := world.AtlasTileNames
 	numTiles := len(names)
 	rows := (numTiles + atlasTilesPerRow - 1) / atlasTilesPerRow
-	atlasSize := uint32(atlasTilesPerRow * tilePixelSize) // width
-	atlasH := uint32(rows * tilePixelSize)                // height
+	atlasW := uint32(atlasTilesPerRow * atlasCellSize)
+	atlasH := uint32(rows * atlasCellSize)
 
-	pixels := make([]byte, atlasSize*atlasH*4)
+	pixels := make([]byte, atlasW*atlasH*4)
 	tileUVs := make([][4]float32, numTiles)
+
+	// setPx writes an opaque RGBA pixel into the atlas (alpha forced to 255 so
+	// every block renders opaquely without alpha blending).
+	setPx := func(x, y uint32, r, g, b byte) {
+		off := int(y*atlasW*4) + int(x*4)
+		pixels[off+0] = r
+		pixels[off+1] = g
+		pixels[off+2] = b
+		pixels[off+3] = 255
+	}
 
 	for i, name := range names {
 		data, err := assets.TextureFile(name + ".png")
@@ -59,35 +79,54 @@ func NewAtlas(device *sdl.GPUDevice) (*Atlas, error) {
 
 		col := uint32(i % atlasTilesPerRow)
 		row := uint32(i / atlasTilesPerRow)
-		// Blit the tile into the atlas, forcing alpha to 255 so every block
-		// renders opaquely (the MVP pipeline has no alpha blending).
-		for y := 0; y < tilePixelSize; y++ {
-			for x := 0; x < tilePixelSize; x++ {
-				src := rgba.Pix[(y*rgba.Stride)+x*4 : (y*rgba.Stride)+x*4+4]
-				dx := col*tilePixelSize + uint32(x)
-				dy := row*tilePixelSize + uint32(y)
-				off := int(dy*atlasSize*4) + int(dx*4)
-				pixels[off+0] = src[0]
-				pixels[off+1] = src[1]
-				pixels[off+2] = src[2]
-				pixels[off+3] = 255
+		// Top-left of this tile's content inside the atlas (past the padding).
+		ox := col*atlasCellSize + atlasPad
+		oy := row*atlasCellSize + atlasPad
+
+		// Helper to read a content texel, clamping indices to [0, tilePixelSize-1]
+		// so edge duplication can safely reference the border row/column.
+		texel := func(x, y int) (byte, byte, byte) {
+			if x < 0 {
+				x = 0
+			} else if x >= tilePixelSize {
+				x = tilePixelSize - 1
+			}
+			if y < 0 {
+				y = 0
+			} else if y >= tilePixelSize {
+				y = tilePixelSize - 1
+			}
+			s := rgba.Pix[y*rgba.Stride+x*4:]
+			return s[0], s[1], s[2]
+		}
+
+		// Write the content plus the 1px padding border duplicated from the
+		// nearest edge texel. ox/oy already point past the padding, so the
+		// loop variable (which ranges over [-pad, tile+pad)) is used directly
+		// as the offset from them.
+		for y := -atlasPad; y < tilePixelSize+atlasPad; y++ {
+			for x := -atlasPad; x < tilePixelSize+atlasPad; x++ {
+				r, g, b := texel(x, y)
+				setPx(uint32(int(ox)+x), uint32(int(oy)+y), r, g, b)
 			}
 		}
 
-		// UV rect with a half-texel inset to avoid bleeding between tiles
-		// when using nearest filtering at chunk edges.
-		inset := 0.5 / float32(atlasSize)
-		u0 := float32(col)*tilePixelSize/float32(atlasSize) + inset
-		v0 := float32(row)*tilePixelSize/float32(atlasH) + inset
-		u1 := float32(col+1)*tilePixelSize/float32(atlasSize) - inset
-		v1 := float32(row+1)*tilePixelSize/float32(atlasH) - inset
+		// UV rect spans the full content area (texel 0's left edge to texel 15's
+		// right edge) with no inset, so all 16 texels render at full width.
+		// Bleeding at the edges is absorbed by the 1px duplicated padding around
+		// the tile: a sample that drifts past the content boundary lands on a
+		// copy of the edge texel, never on the neighbouring tile.
+		u0 := float32(ox) / float32(atlasW)
+		v0 := float32(oy) / float32(atlasH)
+		u1 := float32(ox+tilePixelSize) / float32(atlasW)
+		v1 := float32(oy+tilePixelSize) / float32(atlasH)
 		tileUVs[i] = [4]float32{u0, v0, u1, v1}
 	}
 
 	texture, err := device.CreateTexture(&sdl.GPUTextureCreateInfo{
 		Type:              sdl.GPU_TEXTURETYPE_2D,
 		Format:            sdl.GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
-		Width:             atlasSize,
+		Width:             atlasW,
 		Height:            atlasH,
 		LayerCountOrDepth: 1,
 		NumLevels:         1,
@@ -123,12 +162,12 @@ func NewAtlas(device *sdl.GPUDevice) (*Atlas, error) {
 		&sdl.GPUTextureTransferInfo{
 			TransferBuffer: transfer,
 			Offset:         0,
-			PixelsPerRow:   atlasSize,
+			PixelsPerRow:   atlasW,
 			RowsPerLayer:   atlasH,
 		},
 		&sdl.GPUTextureRegion{
 			Texture: texture,
-			W:       atlasSize,
+			W:       atlasW,
 			H:       atlasH,
 			D:       1,
 		},
@@ -153,7 +192,7 @@ func NewAtlas(device *sdl.GPUDevice) (*Atlas, error) {
 	return &Atlas{
 		texture: texture,
 		sampler: sampler,
-		size:    atlasSize,
+		size:    atlasW,
 		tileUVs: tileUVs,
 	}, nil
 }
