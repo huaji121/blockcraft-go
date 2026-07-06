@@ -102,8 +102,14 @@ func (p *Player) ViewMatrix() mgl32.Mat4 {
 }
 
 // HandleMouse applies relative mouse motion to yaw and pitch.
+//
+// SDL reports xrel>0 when the mouse moves right and yrel>0 when it moves down
+// (screen Y grows downward). With mgl32's right-handed QuatRotate, a positive
+// yaw rotates the forward vector toward -X (left) and a positive pitch toward
+// +Y (up), so we subtract xrel (mouse right → look right) and subtract yrel
+// (mouse down → look down, standard non-inverted).
 func (p *Player) HandleMouse(xrel, yrel float32) {
-	p.Yaw += xrel * mouseSens
+	p.Yaw -= xrel * mouseSens
 	p.Pitch -= yrel * mouseSens
 	// Wrap yaw into [-pi, pi] for numerical stability.
 	if p.Yaw > math.Pi {
