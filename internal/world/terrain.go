@@ -17,43 +17,57 @@ const (
 // spawn area. The actual height per column varies with noise around this.
 const surfaceBaseY = 34
 
+// valueNoise2D returns smooth [0,1) value noise at world-space (x,z) sampled
+// at the given frequency. Deterministic in seed. Used by both the heightmap
+// and the biome map.
+func valueNoise2D(x, z float32, seed int64) float32 {
+	noise := func(ix, iz int) float32 {
+		h := hash3(int64(ix), int64(iz), seed)
+		return float32(h) / float32(math.MaxUint32)
+	}
+	ix := int(math.Floor(float64(x)))
+	iz := int(math.Floor(float64(z)))
+	fx := x - float32(ix)
+	fz := z - float32(iz)
+	sx := fx * fx * (3 - 2*fx)
+	sz := fz * fz * (3 - 2*fz)
+	v00 := noise(ix, iz)
+	v10 := noise(ix+1, iz)
+	v01 := noise(ix, iz+1)
+	v11 := noise(ix+1, iz+1)
+	a := v00 + (v10-v00)*sx
+	b := v01 + (v11-v01)*sx
+	return a + (b-a)*sz
+}
+
 // heightAt returns the terrain surface height (top solid block Y + 1) for a
 // world-space column using a small two-octave value noise derived from seed.
 // It is deterministic so chunks regenerate identically after unload/reload.
 func heightAt(wx, wz int32, seed int64) int32 {
-	noise := func(x, z int) float32 {
-		// Hash two integers + seed into [0,1).
-		h := hash3(int64(x), int64(z), seed)
-		return float32(h) / float32(math.MaxUint32)
-	}
-	smooth := func(x, z float32) float32 {
-		ix := int(math.Floor(float64(x)))
-		iz := int(math.Floor(float64(z)))
-		fx := x - float32(ix)
-		fz := z - float32(iz)
-		// Smoothstep for nicer interpolation.
-		sx := fx * fx * (3 - 2*fx)
-		sz := fz * fz * (3 - 2*fz)
-		v00 := noise(ix, iz)
-		v10 := noise(ix+1, iz)
-		v01 := noise(ix, iz+1)
-		v11 := noise(ix+1, iz+1)
-		a := v00 + (v10-v00)*sx
-		b := v01 + (v11-v01)*sx
-		return a + (b-a)*sz
-	}
-
-	const scale1 = 0.0625 // 1/16 — large rolling hills
-	const scale2 = 0.125  // 1/8  — medium detail
 	x := float32(wx)
 	z := float32(wz)
-	h := smooth(x*scale1, z*scale1)*0.7 + smooth(x*scale2, z*scale2)*0.3
-	// Map [0,1] to a height range around surfaceBaseY.
+	// Use a distinct seed offset so height noise is independent of biome noise.
+	const scale1 = 0.0625 // 1/16 — large rolling hills
+	const scale2 = 0.125  // 1/8  — medium detail
+	h := valueNoise2D(x*scale1, z*scale1, seed+1)*0.7 +
+		valueNoise2D(x*scale2, z*scale2, seed+1)*0.3
 	return int32(surfaceBaseY) + int32((h-0.5)*16)
 }
 
-// generateTerrain fills a chunk's block data with the procedural terrain.
-// Stone under dirt under grass on the surface, bedrock at the very bottom.
+// BiomeAt returns the biome for a world-space column. Desert dominates in dry
+// (high-noise) regions; plains elsewhere. The noise frequency is low so biomes
+// cover large contiguous areas rather than flickering per block.
+func BiomeAt(wx, wz int32, seed int64) BiomeID {
+	n := valueNoise2D(float32(wx)*0.0208, float32(wz)*0.0208, seed+98765) // ~1/48
+	if n > 0.58 {
+		return BiomeDesert
+	}
+	return BiomePlains
+}
+
+// generateTerrain fills a chunk's block data with the procedural terrain. The
+// surface and sub-surface blocks come from the column's biome (grass+dirt for
+// plains, sand+sand for desert), with stone underneath and bedrock at y=0.
 func generateTerrain(c *Chunk, seed int64) {
 	ox, oy, oz := c.Pos.WorldOrigin()
 	hasSolid := false
@@ -62,6 +76,9 @@ func generateTerrain(c *Chunk, seed int64) {
 			wx := ox + int32(lx)
 			wz := oz + int32(lz)
 			h := heightAt(wx, wz, seed)
+			bi := BiomeAt(wx, wz, seed)
+			surface := biomes[bi].Surface
+			subFill := biomes[bi].SubFill
 			for ly := 0; ly < ChunkSize; ly++ {
 				wy := oy + int32(ly)
 				var b BlockID
@@ -71,9 +88,9 @@ func generateTerrain(c *Chunk, seed int64) {
 				case wy < h-4:
 					b = Stone
 				case wy < h-1:
-					b = Dirt
+					b = subFill
 				case wy == h-1:
-					b = Grass
+					b = surface
 				default:
 					b = Air
 				}

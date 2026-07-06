@@ -55,14 +55,13 @@ func NewAtlas(device *sdl.GPUDevice) (*Atlas, error) {
 	pixels := make([]byte, atlasW*atlasH*4)
 	tileUVs := make([][4]float32, numTiles)
 
-	// setPx writes an opaque RGBA pixel into the atlas (alpha forced to 255 so
-	// every block renders opaquely without alpha blending).
-	setPx := func(x, y uint32, r, g, b byte) {
+	// setPx writes an RGBA pixel into the atlas.
+	setPx := func(x, y uint32, r, g, b, a byte) {
 		off := int(y*atlasW*4) + int(x*4)
 		pixels[off+0] = r
 		pixels[off+1] = g
 		pixels[off+2] = b
-		pixels[off+3] = 255
+		pixels[off+3] = a
 	}
 
 	for i, name := range names {
@@ -77,6 +76,12 @@ func NewAtlas(device *sdl.GPUDevice) (*Atlas, error) {
 		rgba := image.NewRGBA(img.Bounds())
 		draw.Draw(rgba, rgba.Bounds(), img, img.Bounds().Min, draw.Src)
 
+		// Overlay tiles are grayscale masks: their brightness encodes the
+		// grass-lip shape. We store them as white RGB (so the vertex tint
+		// supplies the colour) with alpha = brightness (so dark = transparent).
+		// All other tiles are stored opaquely with their original colour.
+		overlay := world.IsOverlayTile(uint8(i))
+
 		col := uint32(i % atlasTilesPerRow)
 		row := uint32(i / atlasTilesPerRow)
 		// Top-left of this tile's content inside the atlas (past the padding).
@@ -85,7 +90,7 @@ func NewAtlas(device *sdl.GPUDevice) (*Atlas, error) {
 
 		// Helper to read a content texel, clamping indices to [0, tilePixelSize-1]
 		// so edge duplication can safely reference the border row/column.
-		texel := func(x, y int) (byte, byte, byte) {
+		texel := func(x, y int) (byte, byte, byte, byte) {
 			if x < 0 {
 				x = 0
 			} else if x >= tilePixelSize {
@@ -97,7 +102,7 @@ func NewAtlas(device *sdl.GPUDevice) (*Atlas, error) {
 				y = tilePixelSize - 1
 			}
 			s := rgba.Pix[y*rgba.Stride+x*4:]
-			return s[0], s[1], s[2]
+			return s[0], s[1], s[2], s[3]
 		}
 
 		// Write the content plus the 1px padding border duplicated from the
@@ -106,8 +111,14 @@ func NewAtlas(device *sdl.GPUDevice) (*Atlas, error) {
 		// as the offset from them.
 		for y := -atlasPad; y < tilePixelSize+atlasPad; y++ {
 			for x := -atlasPad; x < tilePixelSize+atlasPad; x++ {
-				r, g, b := texel(x, y)
-				setPx(uint32(int(ox)+x), uint32(int(oy)+y), r, g, b)
+				r, g, b, _ := texel(x, y)
+				if overlay {
+					// Grayscale mask: brightness → alpha, white RGB.
+					brightness := r // r==g==b for grayscale source
+					setPx(uint32(int(ox)+x), uint32(int(oy)+y), 255, 255, 255, brightness)
+				} else {
+					setPx(uint32(int(ox)+x), uint32(int(oy)+y), r, g, b, 255)
+				}
 			}
 		}
 

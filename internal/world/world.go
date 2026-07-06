@@ -244,7 +244,7 @@ func (w *World) meshDirty() {
 		if c == nil {
 			continue
 		}
-		data := BuildChunkMesh(c, w.Sampler(), w.atlas)
+		data := BuildChunkMesh(c, w.Sampler(), w.BiomeSampler(), w.atlas)
 		c.MarkClean()
 		w.pendingUploads = append(w.pendingUploads, MeshUpload{Pos: pos, Data: data})
 	}
@@ -287,6 +287,15 @@ func (w *World) markDirty(cx, cy, cz int32) {
 func (w *World) Sampler() BlockSampler {
 	return func(wx, wy, wz int32) BlockID {
 		return w.GetBlock(wx, wy, wz)
+	}
+}
+
+// BiomeSampler returns a BiomeSampler that resolves a world column to its
+// biome. The biome is derived purely from (x,z) and the seed, so it is stable
+// regardless of whether the chunk is currently loaded.
+func (w *World) BiomeSampler() BiomeSampler {
+	return func(wx, wz int32) BiomeID {
+		return BiomeAt(wx, wz, w.seed)
 	}
 }
 

@@ -58,38 +58,56 @@ type blockDef struct {
 // tile order. The renderer builds the atlas from this list, so a tile's index
 // here is its index in the atlas. Must stay in sync with the tiles[] entries.
 var AtlasTileNames = []string{
-	"dirt",               // 0
-	"grass_block_top",    // 1
-	"grass_block_side",   // 2
-	"stone",              // 3
-	"cobblestone",        // 4
-	"bedrock",            // 5
-	"oak_log_top",        // 6
-	"oak_log",            // 7
-	"oak_planks",         // 8
-	"sand",               // 9
-	"gravel",             // 10
-	"coal_ore",           // 11
-	"iron_ore",           // 12
-	"diamond_ore",        // 13
-	"gold_ore",           // 14
-	"glass",              // 15
+	"dirt",                    // 0
+	"grass_block_top",         // 1  (grayscale — tinted by biome)
+	"grass_block_side",        // 2  (base layer, not tinted)
+	"stone",                   // 3
+	"cobblestone",             // 4
+	"bedrock",                 // 5
+	"oak_log_top",             // 6
+	"oak_log",                 // 7
+	"oak_planks",              // 8
+	"sand",                    // 9
+	"gravel",                  // 10
+	"coal_ore",                // 11
+	"iron_ore",                // 12
+	"diamond_ore",             // 13
+	"gold_ore",                // 14
+	"glass",                   // 15
+	"grass_block_side_overlay", // 16 (overlay layer — tinted by biome, alpha from brightness)
 }
 
 // Convenience tile indices.
 const (
-	tileDirt        = 0
-	tileGrassTop    = 1
-	tileGrassSide   = 2
-	tileStone       = 3
-	tileCobblestone = 4
-	tileBedrock     = 5
-	tileOakLogTop   = 6
-	tileOakLog      = 7
-	tileOakPlanks   = 8
-	tileSand        = 9
-	tileGravel      = 10
+	tileDirt            = 0
+	tileGrassTop        = 1
+	tileGrassSide       = 2
+	tileStone           = 3
+	tileCobblestone     = 4
+	tileBedrock         = 5
+	tileOakLogTop       = 6
+	tileOakLog          = 7
+	tileOakPlanks       = 8
+	tileSand            = 9
+	tileGravel          = 10
+	tileGrassSideOverlay = 16
 )
+
+// OverlayTileNames is the set of atlas tiles whose alpha is derived from the
+// source texture's brightness (rather than forced opaque). These are the
+// tinted overlay layers composited over a base layer with alpha blending.
+var overlayTileNames = map[string]bool{
+	"grass_block_side_overlay": true,
+}
+
+// IsOverlayTile reports whether the tile at the given atlas index is an
+// alpha-derived overlay tile (used by the renderer when packing the atlas).
+func IsOverlayTile(tile uint8) bool {
+	if int(tile) >= len(AtlasTileNames) {
+		return false
+	}
+	return overlayTileNames[AtlasTileNames[tile]]
+}
 
 var blockDefs = [NumBlockTypes]blockDef{
 	Air:         {name: "air"},
@@ -138,3 +156,50 @@ func (b BlockID) Tile(face int) uint8 { return blockDefs[b].tiles[face] }
 
 // Name returns the human-readable block name.
 func (b BlockID) Name() string { return blockDefs[b].name }
+
+// BiomeID identifies a biome. Biomes are determined per world (x,z) column and
+// control terrain surface blocks and grass tint colour.
+type BiomeID uint8
+
+const (
+	BiomePlains BiomeID = iota
+	BiomeDesert
+	NumBiomes
+)
+
+// Biome describes a biome's terrain and appearance.
+type Biome struct {
+	ID        BiomeID
+	Name      string
+	Surface   BlockID      // block placed at the terrain surface
+	SubFill   BlockID      // block placed a few layers below the surface
+	GrassTint [3]float32   // RGB in [0,1] used to tint grass top + side overlay
+}
+
+// biomes is the registered biome table, indexed by BiomeID. New biomes are
+// added by appending a const above and an entry here — the rest of the engine
+// picks them up automatically.
+var biomes = [NumBiomes]Biome{
+	BiomePlains: {
+		ID:        BiomePlains,
+		Name:      "plains",
+		Surface:   Grass,
+		SubFill:   Dirt,
+		GrassTint: [3]float32{0.42, 0.70, 0.30}, // lush green
+	},
+	BiomeDesert: {
+		ID:        BiomeDesert,
+		Name:      "desert",
+		Surface:   Sand,
+		SubFill:   Sand,
+		GrassTint: [3]float32{0.768, 0.639, 0.329}, // #c4a354 withered yellow
+	},
+}
+
+// BiomeByID returns the biome definition for the given ID.
+func BiomeByID(id BiomeID) Biome { return biomes[id] }
+
+// GrassTint returns the grass tint colour (RGB in [0,1]) for the biome at the
+// given world column. This is the single source of truth used by the mesher to
+// tint grass-block top faces and side overlays.
+func GrassTint(id BiomeID) [3]float32 { return biomes[id].GrassTint }
