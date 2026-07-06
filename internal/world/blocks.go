@@ -158,6 +158,21 @@ func (b BlockID) Tile(face int) uint8 { return blockDefs[b].tiles[face] }
 // Name returns the human-readable block name.
 func (b BlockID) Name() string { return blockDefs[b].name }
 
+// BlockSideTextureName returns the atlas texture name used for the block's +X
+// (side) face, which serves as a representative icon for the block. Returns
+// "" for air or out-of-range blocks. Used by the item package to give block
+// items a resolvable TexturePath.
+func BlockSideTextureName(b BlockID) string {
+	if b == Air || int(b) >= len(blockDefs) {
+		return ""
+	}
+	tile := b.Tile(FacePosX)
+	if int(tile) >= len(AtlasTileNames) {
+		return ""
+	}
+	return AtlasTileNames[tile]
+}
+
 // BiomeID identifies a biome. Biomes are determined per world (x,z) column and
 // control terrain surface blocks and grass tint colour.
 type BiomeID uint8
